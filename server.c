@@ -148,6 +148,8 @@ int main()
         }
 
         // Assign a unique ID to this client
+        //     We lock the mutex to prevent other threads from accessing the id value and then increment it. 
+        //     After this is done, we unlock the mutex, thus preserving uniqueness for each client id.
         pthread_mutex_lock(&client_counter_lock);
         client->client_id = client_counter++;
         pthread_mutex_unlock(&client_counter_lock);

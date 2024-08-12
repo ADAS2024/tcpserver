@@ -6,42 +6,49 @@
 #include <strings.h> // bzero()
 #include <sys/socket.h>
 #include <unistd.h> // read(), write(), close()
+#include <pthread.h>
 #define MAX 80
 #define PORT 8080
 #define SA struct sockaddr
 
 
-// Function designed for chat as medium between client and server. Here it takes in a message from the client and then sends it to the server as well as showing the server's response to msg.
-//      Takes in connection parameter sockfd
-//      Creates buffer and zeroes it. Buffer then takes in a message from client. Waits for a newline (i.e enter) before closing.
-//      Writes message to server
-//      zeroes out buffer again to read in the server's response to client through the connected socket (sockfd)
-//      Checks if there is an exit message
-void medium(int sockfd)
-{
-    char buff[MAX];
-    int n;
-    for (;;) {
-        bzero(buff, sizeof(buff));
-        printf("Enter the string : ");
-        n = 0;
-        while ((buff[n++] = getchar()) != '\n')
-            ;
-        write(sockfd, buff, sizeof(buff));
-        bzero(buff, sizeof(buff));
-        read(sockfd, buff, sizeof(buff));
-        printf("From Server : %s", buff);
-        if ((strncmp(buff, "exit", 4)) == 0) {
-            printf("Client Exit...\n");
-            break;
+// Function is used to recieve messages from server.
+void *receive_messages(void *sockfd_ptr) {
+    int sockfd = *((int *)sockfd_ptr);
+    char buffer[MAX];
+    while (1) {
+        bzero(buffer, sizeof(buffer));
+        int n = read(sockfd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            printf("Server disconnected\n");
+            exit(0);
+        }
+        printf("Server: %s", buffer);
+    }
+    return NULL;
+}
+
+// Used to send messages to server. Takes in the connection socket and writes message from user to the socket which is then sent to server.
+void *send_messages(void *sockfd_ptr) {
+    int sockfd = *((int *)sockfd_ptr);
+    char buffer[MAX];
+    while (1) {
+        bzero(buffer, sizeof(buffer));
+        fgets(buffer, sizeof(buffer), stdin);
+        write(sockfd, buffer, strlen(buffer));
+        if (strncmp("exit", buffer, 4) == 0) {
+            printf("Exiting...\n");
+            exit(0);
         }
     }
+    return NULL;
 }
  
 int main()
 {
     int sockfd, connfd;
-    struct sockaddr_in servaddr, cli;
+    struct sockaddr_in servaddr;
+    pthread_t send_thread, recv_thread;
  
     // socket create and verification
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -51,6 +58,7 @@ int main()
     }
     else
         printf("Socket successfully created..\n");
+
     bzero(&servaddr, sizeof(servaddr));
  
     // assign IP, PORT
@@ -67,9 +75,15 @@ int main()
     else
         printf("connected to the server..\n");
  
-    // function for chat
-    medium(sockfd);
+    // create threads to send and recieve messages to and from server
+    pthread_create(&recv_thread, NULL, receive_messages, &sockfd)
+    pthread_create(&send_thread, NULL, send_messages, &sockfd)
+
+    // we need to wait for thread to finish each operation with server, so we use join rather than detach
+    pthread_join(recv_thread, NULL)
+    pthread_join(send_thread, NULL)
  
     // close the socket
     close(sockfd);
+    return 0;
 }

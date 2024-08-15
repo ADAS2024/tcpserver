@@ -11,8 +11,7 @@
 #define PORT 8080
 #define SA struct sockaddr
 
-
-// Function is used to recieve messages from server.
+// Function to receive messages from server
 void *receive_messages(void *sockfd_ptr) {
     int sockfd = *((int *)sockfd_ptr);
     char buffer[MAX];
@@ -23,7 +22,7 @@ void *receive_messages(void *sockfd_ptr) {
             printf("Server disconnected\n");
             exit(0);
         }
-        printf("Server: %s", buffer);
+        printf("%s", buffer);
     }
     return NULL;
 }
@@ -43,13 +42,13 @@ void *send_messages(void *sockfd_ptr) {
     }
     return NULL;
 }
- 
+
 int main()
 {
-    int sockfd, connfd;
+    int sockfd, connfd, choice;
     struct sockaddr_in servaddr;
-    pthread_t send_thread, recv_thread;
- 
+    pthread_t recv_thread, send_thread;
+
     // socket create and verification
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
@@ -60,29 +59,28 @@ int main()
         printf("Socket successfully created..\n");
 
     bzero(&servaddr, sizeof(servaddr));
- 
+
     // assign IP, PORT
-    servaddr.sin_family = AF_INET;
+    servaddr.sin_family = AF_INET; // IPV4 address
     servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
     servaddr.sin_port = htons(PORT);
- 
+
     // connect the client socket to server socket
-    if (connect(sockfd, (SA*)&servaddr, sizeof(servaddr))
-        != 0) {
+    if (connect(sockfd, (SA*)&servaddr, sizeof(servaddr)) != 0) {
         printf("connection with the server failed...\n");
         exit(0);
     }
     else
         printf("connected to the server..\n");
- 
-    // create threads to send and recieve messages to and from server
-    pthread_create(&recv_thread, NULL, receive_messages, &sockfd)
-    pthread_create(&send_thread, NULL, send_messages, &sockfd)
 
-    // we need to wait for thread to finish each operation with server, so we use join rather than detach
-    pthread_join(recv_thread, NULL)
-    pthread_join(send_thread, NULL)
- 
+    // Create threads for receiving and sending messages
+    pthread_create(&recv_thread, NULL, receive_messages, &sockfd);
+    pthread_create(&send_thread, NULL, send_messages, &sockfd);
+
+    // Wait for the threads to complete
+    pthread_join(recv_thread, NULL);
+    pthread_join(send_thread, NULL);
+
     // close the socket
     close(sockfd);
     return 0;

@@ -1,14 +1,3 @@
-// Based on code from https://www.geeksforgeeks.org/tcp-server-client-implementation-in-c/
-
-// List of changes:
-//      Added comments primarily for own understanding
-//      renamed some funcs and vars in how I interpreted roles
-//      Implemented server side multithreading
-// Planned changes:
-//      Implement multithreading (client side)
-//      Encrypt message with caesar cipher
-//      Allow for file transfers
-
 #include <stdio.h> 
 #include <netdb.h> 
 #include <netinet/in.h> 
@@ -18,6 +7,7 @@
 #include <sys/types.h> 
 #include <unistd.h> // read(), write(), close()
 #include <pthread.h>
+#include <arpa/inet.h> // inet_ntop
 #define MAX 80 
 #define PORT 8080 
 #define SA struct sockaddr 
@@ -29,17 +19,23 @@ typedef struct {
     struct sockaddr_in client_addr;
 } client_info;
 
-// Global variable to assign unique client IDs
-int client_counter = 0;
-pthread_mutex_t client_counter_lock;
+// Global variables to manage clients
+client_info* clients[100];  // Array to hold pointers to client information structures
+int client_count = 0;
+pthread_mutex_t clients_lock;
 
-// Function designed for chat as medium between client and server. In this case it takes in the message from the server and sends it to the client.
-//      Takes in connection parameter conn
-//      Creates buffer and zeroes it. Buffer then takes in a message (read()) from the client through the connection (conn)
-//      prints it out for user readability
-//      zeroes out buffer again to take in msg to send back to client. Waits for server to respond.
-//      Writes msg back to client
-//      Checks if there is an exit message
+// Function to broadcast a message to all connected clients
+void broadcast_message(char* message, int sender_conn) {
+    pthread_mutex_lock(&clients_lock);
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i]->conn != sender_conn) {  // Don't send the message back to the sender
+            write(clients[i]->conn, message, strlen(message));
+        }
+    }
+    pthread_mutex_unlock(&clients_lock);
+}
+
+// Function to handle communication with a client
 void *medium(void* client_info_ptr) 
 { 
     char buff[MAX]; 
@@ -56,24 +52,35 @@ void *medium(void* client_info_ptr)
         bzero(buff, MAX); 
    
         // Read the message from client and copy it in buffer 
-        read(conn, buff, sizeof(buff)); 
+        int bytes_read = read(conn, buff, sizeof(buff)); 
+        if (bytes_read <= 0) {
+            printf("Client %d disconnected or error occurred...\n", client_id);
+            break;
+        }
+
         // Print buffer which contains the client contents 
-        printf("From client %d: %s\t To client %d: ", client_id, buff, client_id); 
-        bzero(buff, MAX); 
-        n = 0; 
-        // Copy server message in the buffer 
-        while ((buff[n++] = getchar()) != '\n') 
-            ; 
-   
-        // Send that buffer to client 
-        write(conn, buff, sizeof(buff)); 
+        printf("From client %d: %s\n", client_id, buff);
+
+        // Broadcast the message to all other clients
+        broadcast_message(buff, conn);
    
         // If msg contains "exit" then server exit and chat ended. 
         if (strncmp("exit", buff, 4) == 0) { 
-            printf("Client %d disconnected...\n", client_id);
+            printf("Client %d has left the chat...\n", client_id);
             break; 
         } 
     } 
+    // Remove the client from the list
+    pthread_mutex_lock(&clients_lock);
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i]->conn == conn) {
+            clients[i] = clients[client_count - 1];
+            client_count--;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&clients_lock);
+
     // Close the connection
     close(conn);
     free(client);
@@ -81,17 +88,14 @@ void *medium(void* client_info_ptr)
 } 
    
 // Main driver function
-//    Meaning of certain variables:
-//      AF_INET: Refers to the types of addresses the socket can take. In this case it refers to IPV4 addresses.
-//      SOCK_STREAM: The socket is a TCP socket.
-//      INADDR_ANY: Used to bind to all local network address on the machine
 int main() 
 { 
     int sockfd, conn, len; 
     struct sockaddr_in servaddr, cli; 
+    int opt = 1;
 
-    // Initialize the client ID counter lock
-    pthread_mutex_init(&client_counter_lock, NULL);
+    // Initialize the clients array lock
+    pthread_mutex_init(&clients_lock, NULL);
    
     // Socket creation and verification 
     sockfd = socket(AF_INET, SOCK_STREAM, 0); 
@@ -101,6 +105,12 @@ int main()
     } 
     else
         printf("Socket successfully created..\n"); 
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt failed");
+        exit(EXIT_FAILURE);
+    }
+
     bzero(&servaddr, sizeof(servaddr)); 
    
     // Assign IP, PORT 
@@ -148,14 +158,13 @@ int main()
         }
 
         // Assign a unique ID to this client
-        //     We lock the mutex to prevent other threads from accessing the id value and then increment it. 
-        //     After this is done, we unlock the mutex, thus preserving uniqueness for each client id.
-        pthread_mutex_lock(&client_counter_lock);
-        client->client_id = client_counter++;
-        pthread_mutex_unlock(&client_counter_lock);
-
+        pthread_mutex_lock(&clients_lock);
+        client->client_id = client_count;
         client->conn = conn;
         client->client_addr = cli;
+
+        clients[client_count++] = client;
+        pthread_mutex_unlock(&clients_lock);
 
         pthread_create(&thread_id, NULL, medium, client);
         pthread_detach(thread_id);
@@ -163,6 +172,6 @@ int main()
    
     // Close the socket (will not be reached unless the server is shut down)
     close(sockfd); 
-    pthread_mutex_destroy(&client_counter_lock);
+    pthread_mutex_destroy(&clients_lock);
     return 0;
 }

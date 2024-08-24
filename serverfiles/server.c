@@ -1,3 +1,4 @@
+//server code
 #include <stdio.h> 
 #include <netdb.h> 
 #include <netinet/in.h> 
@@ -7,7 +8,8 @@
 #include <sys/types.h> 
 #include <unistd.h> // read(), write(), close()
 #include <pthread.h>
-#include <arpa/inet.h> // inet_ntop
+#include <arpa/inet.h> 
+#include <dirent.h> // Required for directory operations for files
 #define MAX 80 
 #define PORT 8080 
 #define SA struct sockaddr 
@@ -24,18 +26,99 @@ client_info* clients[100];  // Array to hold pointers to client information stru
 int client_count = 0;
 pthread_mutex_t clients_lock;
 
+
+void send_file_list(int conn) {
+    struct dirent *de;
+    char buffer[MAX];
+
+    // Open the directory where files are stored
+    DIR *dr = opendir("serverfiles/txtfiles");
+
+    if (dr == NULL) {
+        printf("Could not open directory\n");
+        return;
+    }
+
+    // Send a list of filenames to the client
+    while ((de = readdir(dr)) != NULL) {
+        // Skip the "." and ".." directories
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+            continue;
+        }
+        bzero(buffer, sizeof(buffer));
+        strcpy(buffer, de->d_name);
+        write(conn, buffer, strlen(buffer));
+    }
+
+    // Indicate end of file list
+    bzero(buffer, sizeof(buffer));
+    strcpy(buffer, "END_OF_LIST");
+    write(conn, buffer, strlen(buffer));
+
+    closedir(dr);
+}
+
+
 // Function to broadcast a message to all connected clients
-void broadcast_message(char* message, int sender_conn) {
+void broadcast_message(char* message, int sender_conn, int sender_id) {
     pthread_mutex_lock(&clients_lock);
     for (int i = 0; i < client_count; i++) {
         if (clients[i]->conn != sender_conn) {  // Don't send the message back to the sender
-            write(clients[i]->conn, message, strlen(message));
+            char formatted_message[MAX];
+            snprintf(formatted_message, sizeof(formatted_message), "Client %d: %s", sender_id, message);
+            write(clients[i]->conn, formatted_message, strlen(formatted_message));
         }
     }
     pthread_mutex_unlock(&clients_lock);
 }
 
 // Function to handle communication with a client
+ 
+
+void receive_file(int conn, char *file_name) {
+    char buffer[MAX];
+    FILE *file = fopen(file_name, "wb");
+    if (file == NULL) {
+        printf("Could not create file on server.\n");
+        return;
+    }
+
+    // Acknowledge the file name
+    write(conn, "ACK", 3);
+
+    while (1) {
+        bzero(buffer, sizeof(buffer));
+        int bytes_read = read(conn, buffer, sizeof(buffer));
+        if (bytes_read <= 0 || strncmp(buffer, "EOF", 3) == 0) {
+            break;
+        }
+
+        fwrite(buffer, 1, bytes_read, file);
+    }
+
+    fclose(file);
+    printf("File %s received successfully.\n", file_name);
+}
+
+void send_requested_file(int conn, char *file_name) {
+    char buffer[MAX];
+    FILE *file = fopen(file_name, "rb");
+    if (file == NULL) {
+        printf("File not found: %s\n", file_name);
+        return;
+    }
+
+    while (!feof(file)) {
+        int bytes_read = fread(buffer, 1, sizeof(buffer), file);
+        write(conn, buffer, bytes_read);
+    }
+
+    write(conn, "EOF", 3);
+    fclose(file);
+    printf("File %s sent successfully.\n", file_name);
+}
+
+
 void *medium(void* client_info_ptr) 
 { 
     char buff[MAX]; 
@@ -47,30 +130,44 @@ void *medium(void* client_info_ptr)
 
     printf("Handling client with ID: %d\n", client_id);
     
-    // Infinite loop for chat 
-     for (;;) { 
+    // Infinite loop for communication 
+    for (;;) { 
         bzero(buff, MAX); 
-   
-        // Read the message from client and copy it in buffer 
         int bytes_read = read(conn, buff, sizeof(buff)); 
         if (bytes_read <= 0) {
             printf("Client %d disconnected or error occurred...\n", client_id);
             break;
         }
 
-        // Print buffer which contains the client contents 
-        printf("From client %d: %s\n", client_id, buff);
+        if (strncmp(buff, "CHAT ", 5) == 0) {
+            printf("From client %d: %s", client_id, buff + 5); // Seems to have prepended 5 bytes before the CHAT. Will need to check out
+            broadcast_message(buff + 10, conn, client_id); // Shouldn't have to increment bytes by 10 here, should only be 5
+        }
 
-        // Broadcast the message to all other clients
-        broadcast_message(buff, conn);
-   
-        // If msg contains "exit" then server exit and chat ended. 
-        if (strncmp("exit", buff, 4) == 0) { 
+        else if (strncmp(buff, "LIST_FILES", 10) == 0) {
+            send_file_list(conn);
+        }
+
+        else if (strncmp(buff, "SEND_FILE", 9) == 0) {
+            char *file_name = buff + 10;
+            receive_file(conn, file_name);
+        }
+
+        else if (strncmp(buff, "RECV_FILE", 9) == 0) {
+            char *file_name = buff + 10;
+            send_requested_file(conn, file_name);
+        }
+
+        else if (strncmp(buff, "EXIT", 4) == 0) {
             printf("Client %d has left the chat...\n", client_id);
             break; 
-        } 
-    } 
-    // Remove the client from the list
+        }
+
+        else {
+            printf("Unknown command from client %d: %s\n", client_id, buff);
+        }
+    }
+         
     pthread_mutex_lock(&clients_lock);
     for (int i = 0; i < client_count; i++) {
         if (clients[i]->conn == conn) {
@@ -81,14 +178,14 @@ void *medium(void* client_info_ptr)
     }
     pthread_mutex_unlock(&clients_lock);
 
-    // Close the connection
     close(conn);
     free(client);
     return NULL;
-} 
-   
+}
+
+
 // Main driver function
-int main() 
+void start_chatroom(int port) 
 { 
     int sockfd, conn, len; 
     struct sockaddr_in servaddr, cli; 
@@ -173,5 +270,11 @@ int main()
     // Close the socket (will not be reached unless the server is shut down)
     close(sockfd); 
     pthread_mutex_destroy(&clients_lock);
+    }
+
+
+
+int main() {
+    start_chatroom(PORT);
     return 0;
 }

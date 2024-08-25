@@ -39,13 +39,15 @@ void *send_file(void *sockfd_ptr) {
     int sockfd = *((int *)sockfd_ptr);
     char buffer[MAX];
     char file_name[MAX];
-    
+    char file_path[MAX];
+
     printf("Enter the name of the file to send: ");
     scanf("%s", file_name);
 
-    FILE *file = fopen(file_name, "rb");
+    snprintf(file_path, sizeof(file_path), "txtfiles/%s", file_name); // We open the client in clientfiles so we access txtfiles directly.
+    FILE *file = fopen(file_path, "rb");
     if (file == NULL) {
-        printf("File not found.\n");
+        printf("File not found: %s\n", file_path);
         return NULL;
     }
 

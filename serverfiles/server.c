@@ -32,7 +32,7 @@ void send_file_list(int conn) {
     char buffer[MAX];
 
     // Open the directory where files are stored
-    DIR *dr = opendir("serverfiles/txtfiles");
+    DIR *dr = opendir("txtfiles");
 
     if (dr == NULL) {
         printf("Could not open directory\n");
@@ -75,9 +75,12 @@ void broadcast_message(char* message, int sender_conn, int sender_id) {
 // Function to handle communication with a client
  
 
-void receive_file(int conn, char *file_name) {
+void receive_clientsent_file(int conn, char *file_name) {
     char buffer[MAX];
-    FILE *file = fopen(file_name, "wb");
+    char file_path[MAX];
+
+    snprintf(file_path, sizeof(file_path), "txtfiles/%s", file_name);
+    FILE *file = fopen(file_path, "wb");
     if (file == NULL) {
         printf("Could not create file on server.\n");
         return;
@@ -150,7 +153,7 @@ void *medium(void* client_info_ptr)
 
         else if (strncmp(buff, "SEND_FILE", 9) == 0) {
             char *file_name = buff + 10;
-            receive_file(conn, file_name);
+            receive_clientsent_file(conn, file_name);
         }
 
         else if (strncmp(buff, "RECV_FILE", 9) == 0) {

@@ -9,7 +9,7 @@
 #include <unistd.h> // read(), write(), close()
 #include <pthread.h>
 #include <dirent.h> // Required for directory operations for files
-#define MAX 80
+#define MAX 600
 #define PORT 8080
 #define SA struct sockaddr
 
@@ -81,7 +81,7 @@ void *send_file(void *sockfd_ptr) {
 void *request_and_display_file_list(void *sockfd_ptr) {
     int sockfd = *((int *)sockfd_ptr);
     char buffer[MAX];
-
+    char *line;
     // Send "LIST_FILES" command
     write(sockfd, "LIST_FILES", strlen("LIST_FILES"));
 
@@ -94,11 +94,15 @@ void *request_and_display_file_list(void *sockfd_ptr) {
             exit(0);
         }
 
-        if (strncmp(buffer, "END_OF_LIST", 11) == 0) {
-            break;
+        buffer[bytes_read] = '\0'; 
+        line = strtok(buffer, "\n");
+        while (line != NULL) {
+            if (strncmp(line, "END_OF_LIST", 11) == 0) {
+                return NULL;
+            }
+            printf("%s\n", line);
+            line = strtok(NULL, "\n");
         }
-
-        printf("%s\n", buffer);
     }
 
     return NULL;
@@ -108,16 +112,16 @@ void *receive_file_from_server(void *sockfd_ptr) {
     int sockfd = *((int *)sockfd_ptr);
     char buffer[MAX];
     char file_name[MAX];
+    char file_path[MAX];
 
     printf("Enter the name of the file to receive: ");
     scanf("%s", file_name);
 
-    // Send "RECV_FILE" command with file name
     snprintf(buffer, sizeof(buffer), "RECV_FILE %s", file_name);
     write(sockfd, buffer, strlen(buffer));
 
-    // Wait for file data
-    FILE *file = fopen(file_name, "wb");
+    snprintf(file_path, sizeof(file_path), "txtfiles/%s", file_name);
+    FILE *file = fopen(file_path, "wb");
     if (file == NULL) {
         printf("Could not create file.\n");
         return NULL;
@@ -126,15 +130,22 @@ void *receive_file_from_server(void *sockfd_ptr) {
     while (1) {
         bzero(buffer, sizeof(buffer));
         int bytes_read = read(sockfd, buffer, sizeof(buffer));
-        if (bytes_read <= 0 || strncmp(buffer, "EOF", 3) == 0) {
+        if (bytes_read < 0) {
+            perror("Failed to read from socket");
+            break;
+        }
+
+        if (bytes_read == 0 || (bytes_read == 3 && strncmp(buffer, "EOF", 3) == 0)) {
+            printf("End of file received.\n");
             break;
         }
 
         fwrite(buffer, 1, bytes_read, file);
+        printf("Received %d bytes from server.\n", bytes_read);
     }
 
     fclose(file);
-    printf("File received successfully.\n");
+    printf("File %s received successfully.\n", file_name);
     return NULL;
 }
 

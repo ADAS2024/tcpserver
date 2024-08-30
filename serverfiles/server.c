@@ -21,8 +21,7 @@ typedef struct {
     struct sockaddr_in client_addr;
 } client_info;
 
-// Global variables to manage clients
-client_info* clients[100];  // Array to hold pointers to client information structures
+client_info* clients[100];  
 int client_count = 0;
 pthread_mutex_t clients_lock;
 
@@ -31,7 +30,6 @@ void send_file_list(int conn) {
     struct dirent *de;
     char buffer[MAX];
 
-    // Open the directory where files are stored
     DIR *dr = opendir("txtfiles");
 
     if (dr == NULL) {
@@ -39,20 +37,21 @@ void send_file_list(int conn) {
         return;
     }
 
-    // Send a list of filenames to the client
+    
     while ((de = readdir(dr)) != NULL) {
-        // Skip the "." and ".." directories
+        
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
             continue;
         }
         bzero(buffer, sizeof(buffer));
+        snprintf(buffer, sizeof(buffer), "%s\n", de->d_name);
         strcpy(buffer, de->d_name);
         write(conn, buffer, strlen(buffer));
     }
 
     // Indicate end of file list
     bzero(buffer, sizeof(buffer));
-    strcpy(buffer, "END_OF_LIST");
+    strcpy(buffer, "END_OF_LIST\n");
     write(conn, buffer, strlen(buffer));
 
     closedir(dr);
@@ -72,9 +71,6 @@ void broadcast_message(char* message, int sender_conn, int sender_id) {
     pthread_mutex_unlock(&clients_lock);
 }
 
-// Function to handle communication with a client
- 
-
 void receive_clientsent_file(int conn, char *file_name) {
     char buffer[MAX];
     char file_path[MAX];
@@ -86,7 +82,6 @@ void receive_clientsent_file(int conn, char *file_name) {
         return;
     }
 
-    // Acknowledge the file name
     write(conn, "ACK", 3);
 
     while (1) {
@@ -103,22 +98,37 @@ void receive_clientsent_file(int conn, char *file_name) {
     printf("File %s received successfully.\n", file_name);
 }
 
-void send_requested_file(int conn, char *file_name) {
+void *send_requested_file(int conn, char *file_name) {
     char buffer[MAX];
-    FILE *file = fopen(file_name, "rb");
+    char file_path[MAX];
+
+    snprintf(file_path, sizeof(file_path), "txtfiles/%s", file_name);
+    FILE *file = fopen(file_path, "rb");
     if (file == NULL) {
-        printf("File not found: %s\n", file_name);
-        return;
+        printf("File not found: %s\n", file_path);
+        return NULL;
     }
 
     while (!feof(file)) {
         int bytes_read = fread(buffer, 1, sizeof(buffer), file);
-        write(conn, buffer, bytes_read);
+        if (bytes_read > 0) {
+            int bytes_sent = write(conn, buffer, bytes_read);
+            printf("Sent %d bytes to client.\n", bytes_sent);
+            if (bytes_sent < 0) {
+                perror("Failed to send data");
+                break;
+            }
+        } else if (ferror(file)) {
+            perror("Failed to read file");
+            break;
+        }
     }
 
+    // Inform client that file transfer is complete
     write(conn, "EOF", 3);
     fclose(file);
     printf("File %s sent successfully.\n", file_name);
+    return NULL;
 }
 
 
@@ -151,12 +161,12 @@ void *medium(void* client_info_ptr)
             send_file_list(conn);
         }
 
-        else if (strncmp(buff, "SEND_FILE", 9) == 0) {
+        else if (strncmp(buff, "SEND_FILE", 9) == 0) { // client sends file to server
             char *file_name = buff + 10;
             receive_clientsent_file(conn, file_name);
         }
 
-        else if (strncmp(buff, "RECV_FILE", 9) == 0) {
+        else if (strncmp(buff, "RECV_FILE", 9) == 0) { // server sends file to client
             char *file_name = buff + 10;
             send_requested_file(conn, file_name);
         }
@@ -194,10 +204,8 @@ void start_chatroom(int port)
     struct sockaddr_in servaddr, cli; 
     int opt = 1;
 
-    // Initialize the clients array lock
     pthread_mutex_init(&clients_lock, NULL);
    
-    // Socket creation and verification 
     sockfd = socket(AF_INET, SOCK_STREAM, 0); 
     if (sockfd == -1) { 
         printf("socket creation failed...\n"); 
@@ -213,12 +221,10 @@ void start_chatroom(int port)
 
     bzero(&servaddr, sizeof(servaddr)); 
    
-    // Assign IP, PORT 
     servaddr.sin_family = AF_INET; 
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY); 
     servaddr.sin_port = htons(PORT); 
    
-    // Binding newly created socket to given IP and verification 
     if ((bind(sockfd, (SA*)&servaddr, sizeof(servaddr))) != 0) { 
         printf("socket bind failed...\n"); 
         exit(0); 
@@ -226,7 +232,6 @@ void start_chatroom(int port)
     else
         printf("Socket successfully binded..\n"); 
    
-    // Now server is ready to listen and verification 
     if ((listen(sockfd, 5)) != 0) { 
         printf("Listen failed...\n"); 
         exit(0); 
@@ -235,9 +240,7 @@ void start_chatroom(int port)
         printf("Server listening..\n"); 
     len = sizeof(cli); 
    
-    // Infinite loop to accept multiple client connections
     while (1) {
-        // Accept the data packet from client and verification 
         conn = accept(sockfd, (SA*)&cli, &len); 
         if (conn < 0) { 
             printf("server accept failed...\n"); 

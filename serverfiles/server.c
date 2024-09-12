@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <arpa/inet.h> 
 #include <dirent.h> // Required for directory operations for files
+#include "../cipher.h" // Cipher functions
 #define MAX 80 
 #define PORT 8080 
 #define SA struct sockaddr 
@@ -37,21 +38,17 @@ void send_file_list(int conn) {
         return;
     }
 
-    
+    // Send file names
     while ((de = readdir(dr)) != NULL) {
-        
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
             continue;
         }
-        bzero(buffer, sizeof(buffer));
         snprintf(buffer, sizeof(buffer), "%s\n", de->d_name);
-        strcpy(buffer, de->d_name);
         write(conn, buffer, strlen(buffer));
     }
 
     // Indicate end of file list
-    bzero(buffer, sizeof(buffer));
-    strcpy(buffer, "END_OF_LIST\n");
+    snprintf(buffer, sizeof(buffer), "END_OF_LIST\n");
     write(conn, buffer, strlen(buffer));
 
     closedir(dr);
@@ -152,11 +149,19 @@ void *medium(void* client_info_ptr)
             break;
         }
 
-        if (strncmp(buff, "CHAT ", 5) == 0) {
-            printf("From client %d: %s", client_id, buff + 5); // Seems to have prepended 5 bytes before the CHAT. Will need to check out
-            broadcast_message(buff + 10, conn, client_id); // Shouldn't have to increment bytes by 10 here, should only be 5
+        // TODO: implement ability to broadcast encoded messages server side.
+        if (strncmp(buff, "CHAT ", 5) == 0) { // OR ENCODE/CIPHER (for implementation server side)
+            printf("From client %d: %s", client_id, buff); // Seems to have prepended 5 bytes before the CHAT. Will need to check out   
+            //(NOTE: POSSIBLE FIX: CLIENT PREPENDED CHAT BEFORE MSG, SO IT CAME AS CHAT CHAT, fixed clientside will test soon)
+            broadcast_message(buff + 5, conn, client_id); // Shouldn't have to increment bytes by 10 here, should only be 5 (NOTE: see above)
         }
 
+        else if (strncmp(buff, "ENCODE ", 7) == 0) { 
+            encrypt(buff, 3);
+            printf("From client %d: %s", client_id, buff); 
+            broadcast_message(buff + 7, conn, client_id); // Shouldn't have to increment bytes by 10 here, should only be 5 (NOTE: see above)
+        }
+        
         else if (strncmp(buff, "LIST_FILES", 10) == 0) {
             send_file_list(conn);
         }
@@ -198,7 +203,7 @@ void *medium(void* client_info_ptr)
 
 
 // Main driver function
-void start_chatroom(int port) 
+void start_chatroom_serverside(int port) 
 { 
     int sockfd, conn, len; 
     struct sockaddr_in servaddr, cli; 
@@ -281,6 +286,6 @@ void start_chatroom(int port)
 
 
 int main() {
-    start_chatroom(PORT);
+    start_chatroom_serverside(PORT);
     return 0;
 }
